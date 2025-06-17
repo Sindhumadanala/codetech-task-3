@@ -1,0 +1,110 @@
+// 4-Stage Pipelined Processor: IF, ID, EX, WB
+// Supports ADD, SUB, LOAD instructions
+
+module pipeline_processor (
+    input clk,
+    input reset
+);
+    // Opcodes
+    parameter ADD  = 2'b00;
+    parameter SUB  = 2'b01;
+    parameter LOAD = 2'b10;
+
+    // Instruction format: [7:6]=opcode, [5:4]=dest, [3:2]=src1, [1:0]=src2 or unused
+    reg [7:0] instr_mem [0:15];
+    reg [7:0] data_mem [0:15];
+    reg [7:0] regfile [0:3];
+
+    // Pipeline registers
+    reg [7:0] IF_ID, ID_EX, EX_WB;
+    reg [7:0] IF_ID_ir, ID_EX_ir, EX_WB_ir; // For visualization
+    reg [7:0] pc;
+
+    // For simulation output
+    wire [7:0] IF_instr = instr_mem[pc];
+    wire [7:0] ID_instr = IF_ID;
+    wire [7:0] EX_instr = ID_EX;
+    wire [7:0] WB_instr = EX_WB;
+
+    reg [7:0] alu_result, mem_result;
+
+    // Initialize code/data/registers
+    initial begin
+        pc = 0;
+        // Example program:
+        // instr_mem[0] = ADD R1, R2, R3
+        // instr_mem[1] = SUB R0, R1, R3
+        // instr_mem[2] = LOAD R2, [R1]
+        instr_mem[0] = {ADD, 2'b01, 2'b10, 2'b11};  // ADD R1, R2, R3
+        instr_mem[1] = {SUB, 2'b00, 2'b01, 2'b11};  // SUB R0, R1, R3
+        instr_mem[2] = {LOAD,2'b10, 2'b01, 2'b00};  // LOAD R2, [R1]
+        instr_mem[3] = 8'b0; // NOP
+
+        // Initialize registers
+        regfile[0] = 8'd5;
+        regfile[1] = 8'd10;
+        regfile[2] = 8'd15;
+        regfile[3] = 8'd20;
+
+        // Data memory (for LOAD)
+        data_mem[10] = 8'd55;
+    end
+
+    // Pipeline logic
+    always @(posedge clk or posedge reset) begin
+        if (reset) begin
+            IF_ID <= 0; ID_EX <= 0; EX_WB <= 0;
+            IF_ID_ir <= 0; ID_EX_ir <= 0; EX_WB_ir <= 0;
+            pc <= 0;
+        end else begin
+            // Write Back (WB) stage
+            if (EX_WB[7:6] == ADD || EX_WB[7:6] == SUB || EX_WB[7:6] == LOAD) begin
+                regfile[EX_WB[5:4]] <= EX_WB[3:0];
+            end
+
+            // Execute (EX) stage
+            case (ID_EX[7:6])
+                ADD:  alu_result = regfile[ID_EX[3:2]] + regfile[ID_EX[1:0]];
+                SUB:  alu_result = regfile[ID_EX[3:2]] - regfile[ID_EX[1:0]];
+                LOAD: mem_result = data_mem[regfile[ID_EX[3:2]]];
+                default: begin alu_result = 0; mem_result = 0; end
+            endcase
+
+            case (ID_EX[7:6])
+                ADD:  EX_WB <= {ADD, ID_EX[5:4], alu_result[3:0]};
+                SUB:  EX_WB <= {SUB, ID_EX[5:4], alu_result[3:0]};
+                LOAD: EX_WB <= {LOAD, ID_EX[5:4], mem_result[3:0]};
+                default: EX_WB <= 0;
+            endcase
+            EX_WB_ir <= ID_EX_ir;
+
+            // Instruction Decode (ID) stage
+            ID_EX <= IF_ID;
+            ID_EX_ir <= IF_ID_ir;
+
+            // Instruction Fetch (IF) stage
+            IF_ID <= instr_mem[pc];
+            IF_ID_ir <= instr_mem[pc];
+            pc <= pc + 1;
+        end
+    end
+endmodule
+//------------------------------------------------------------Testbench code--------------------------------------------
+module testbench;
+    reg clk = 0;
+    reg reset = 1;
+    pipeline_processor uut(.clk(clk), .reset(reset));
+    integer i;
+
+    initial begin
+        $display("Cycle\tPC\tIF\tID\tEX\tWB\tR0\tR1\tR2\tR3");
+        $monitor("%0d\t%2d\t%h\t%h\t%h\t%h\t%d\t%d\t%d\t%d",
+                 i, uut.pc, uut.IF_ID_ir, uut.ID_EX_ir, uut.EX_WB_ir, uut.EX_WB, uut.regfile[0], uut.regfile[1], uut.regfile[2], uut.regfile[3]);
+        #5 reset = 0;
+        for (i=0; i<12; i=i+1) begin
+            #5 clk = ~clk;
+            #5 clk = ~clk;
+        end
+        $finish;
+    end
+endmodule
